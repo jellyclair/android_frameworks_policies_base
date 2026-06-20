@@ -46,19 +46,31 @@ final class ShutdownThread extends Thread {
     // state tracking
     private static Object sIsStartedGuard = new Object();
     private static boolean sIsStarted = false;
-    
+    private static boolean sIsRebooting = false;
+
     // static instance of this thread
     private static final ShutdownThread sInstance = new ShutdownThread();
     
     private ShutdownThread() {
     }
- 
+
     /** 
      * request a shutdown. 
      * 
      * @param context Context used to display the shutdown progress dialog.
      */
-    public static void shutdownAfterDisablingRadio(final Context context, boolean confirm){
+    public static void shutdownAfterDisablingRadio(final Context context, boolean confirm) {
+            shutdownAfterDisablingRadio(context, confirm, false);
+    }
+
+    /**
+     * request a reboot
+     */
+    public static void rebootAfterDisablingRadio(final Context context, boolean confirm) {
+           shutdownAfterDisablingRadio(context, confirm, true);
+    }
+
+    private static void shutdownAfterDisablingRadio(final Context context, boolean confirm, final boolean reboot){
         // ensure that only one thread is trying to power down.
         // any additional calls are just returned
         synchronized (sIsStartedGuard){
@@ -71,13 +83,14 @@ final class ShutdownThread extends Thread {
         Log.d(TAG, "Notifying thread to start radio shutdown");
 
         if (confirm) {
+
             final AlertDialog dialog = new AlertDialog.Builder(context)
                     .setIcon(android.R.drawable.ic_dialog_alert)
-                    .setTitle(com.android.internal.R.string.power_off)
-                    .setMessage(com.android.internal.R.string.shutdown_confirm)
+                    .setTitle(reboot ? com.android.internal.R.string.reboot_system : com.android.internal.R.string.power_off)
+                    .setMessage(reboot ? com.android.internal.R.string.reboot_confirm: com.android.internal.R.string.shutdown_confirm)
                     .setPositiveButton(com.android.internal.R.string.yes, new DialogInterface.OnClickListener() {
                         public void onClick(DialogInterface dialog, int which) {
-                            beginShutdownSequence(context);
+                            beginShutdownSequence(context, reboot);
                         }
                     })
                     .setNegativeButton(com.android.internal.R.string.no, null)
@@ -86,20 +99,21 @@ final class ShutdownThread extends Thread {
             dialog.getWindow().addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND);
             dialog.show();
         } else {
-            beginShutdownSequence(context);
+            beginShutdownSequence(context, reboot);
         }
     }
 
-    private static void beginShutdownSequence(Context context) {
+    private static void beginShutdownSequence(Context context, boolean reboot) {
         synchronized (sIsStartedGuard) {
             sIsStarted = true;
+            sIsRebooting = reboot;
         }
 
         // throw up an indeterminate system dialog to indicate radio is
         // shutting down.
         ProgressDialog pd = new ProgressDialog(context);
-        pd.setTitle(context.getText(com.android.internal.R.string.power_off));
-        pd.setMessage(context.getText(com.android.internal.R.string.shutdown_progress));
+        pd.setTitle(context.getText(reboot ? com.android.internal.R.string.reboot_system : com.android.internal.R.string.power_off));
+        pd.setMessage(context.getText(reboot ? com.android.internal.R.string.reboot_progress : com.android.internal.R.string.shutdown_progress));
         pd.setIndeterminate(true);
         pd.setCancelable(false);
         pd.getWindow().setType(WindowManager.LayoutParams.TYPE_KEYGUARD_DIALOG);
@@ -167,7 +181,16 @@ final class ShutdownThread extends Thread {
         }
 
         //shutdown power
-        Log.d(TAG, "Shutting down power.");
-        Power.shutdown();
+        if (sIsRebooting) {
+            Log.d(TAG, "Rebooting system.");
+	    try {
+            	Power.reboot(null);
+	    } catch (Exception e) {
+		Power.shutdown();
+            }
+        } else {
+            Log.d(TAG, "Shutting down power.");
+            Power.shutdown();
+        }
     }
 }
